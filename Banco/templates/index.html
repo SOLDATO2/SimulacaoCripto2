@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gestão de Clientes e Seletor</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f4f4f4;
+        }
+        .container {
+            width: 80%;
+            margin: auto;
+            overflow: hidden;
+        }
+        header {
+            background: #333;
+            color: #fff;
+            padding-top: 10px;
+            min-height: 70px;
+            border-bottom: #77c2bb 3px solid;
+        }
+        header a {
+            color: #fff;
+            text-decoration: none;
+            text-transform: uppercase;
+            font-size: 16px;
+        }
+        ul {
+            padding: 0;
+            list-style: none;
+        }
+        ul li {
+            display: inline;
+            padding: 0 20px 0 20px;
+        }
+        .main {
+            margin: 20px 0;
+        }
+        .main form {
+            background: #fff;
+            padding: 20px;
+            border: #ccc 1px solid;
+        }
+        .main form div {
+            margin-bottom: 10px;
+        }
+        .main form div label {
+            display: inline-block;
+            width: 90px;
+        }
+        .main form div input {
+            width: calc(100% - 100px);
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+        table, th, td {
+            border: 1px solid #ddd;
+        }
+        table th, table td {
+            padding: 10px;
+            text-align: left;
+        }
+        .actions {
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>Gestão de Clientes e Seletor</h1>
+            <ul>
+                <li><a href="#" onclick="showSection('clientes')">Clientes</a></li>
+                <li><a href="#" onclick="showSection('seletores')">Seletores</a></li>
+                <li><a href="#" onclick="showSection('transacoes')">Transações</a></li>
+            </ul>
+        </div>
+    </header>
+
+    <div class="container main">
+        <section id="clientes" style="display: none;">
+            <h2>Clientes</h2>
+            <form id="clienteForm">
+                <div>
+                    <label for="nome">Nome:</label>
+                    <input type="text" id="nome" name="nome" required>
+                </div>
+                <div>
+                    <label for="senha">Senha:</label>
+                    <input type="password" id="senha" name="senha" required>
+                </div>
+                <div>
+                    <label for="qtdMoeda">Qtd Moeda:</label>
+                    <input type="number" id="qtdMoeda" name="qtdMoeda" required>
+                </div>
+                <button type="submit">Adicionar Cliente</button>
+            </form>
+            <div class="actions">
+                <button onclick="loadClientes()">Atualizar Lista de Clientes</button>
+            </div>
+            <h3>Lista de Clientes</h3>
+            <table id="clienteTable">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Nome</th>
+                        <th>Senha</th>
+                        <th>Qtd Moeda</th>
+                        <th>Ações</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </section>
+
+        <section id="seletores" style="display: none;">
+            <h2>Seletores</h2>
+            <form id="seletorForm">
+                <div>
+                    <label for="nomeSeletor">Nome:</label>
+                    <input type="text" id="nomeSeletor" name="nomeSeletor" required>
+                </div>
+                <div>
+                    <label for="ipSeletor">IP:</label>
+                    <input type="text" id="ipSeletor" name="ipSeletor" required>
+                </div>
+                <button type="submit">Adicionar Seletor</button>
+            </form>
+            <div class="actions">
+                <button onclick="loadSeletores()">Atualizar Lista de Seletores</button>
+            </div>
+            <h3>Lista de Seletores</h3>
+            <table id="seletorTable">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Nome</th>
+                        <th>IP</th>
+                        <th>Ações</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </section>
+
+        <section id="transacoes" style="display: none;">
+            <h2>Transações</h2>
+            <form id="transacaoForm">
+                <div>
+                    <label for="remetente">Remetente:</label>
+                    <input type="number" id="remetente" name="remetente" required>
+                </div>
+                <div>
+                    <label for="recebedor">Recebedor:</label>
+                    <input type="number" id="recebedor" name="recebedor" required>
+                </div>
+                <div>
+                    <label for="valor">Valor:</label>
+                    <input type="number" id="valor" name="valor" required>
+                </div>
+                <button type="submit">Criar Transação</button>
+            </form>
+            <div class="actions">
+                <button onclick="loadTransacoes()">Atualizar Lista de Transações</button>
+            </div>
+            <h3>Lista de Transações</h3>
+            <table id="transacaoTable">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Remetente</th>
+                        <th>Recebedor</th>
+                        <th>Valor</th>
+                        <th>Horário</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </section>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            loadClientes();
+            loadSeletores();
+            loadTransacoes();
+
+            document.getElementById('clienteForm').addEventListener('submit', function(event) {
+                event.preventDefault();
+                addCliente();
+            });
+
+            document.getElementById('seletorForm').addEventListener('submit', function(event) {
+                event.preventDefault();
+                addSeletor();
+            });
+
+            document.getElementById('transacaoForm').addEventListener('submit', function(event) {
+                event.preventDefault();
+                addTransacao();
+            });
+        });
+
+        function showSection(section) {
+            document.getElementById('clientes').style.display = 'none';
+            document.getElementById('seletores').style.display = 'none';
+            document.getElementById('transacoes').style.display = 'none';
+            document.getElementById(section).style.display = 'block';
+        }
+
+        function loadClientes() {
+            fetch('/cliente')
+                .then(response => response.json())
+                .then(data => {
+                    const tbody = document.querySelector('#clienteTable tbody');
+                    tbody.innerHTML = '';
+                    data.forEach(cliente => {
+                        const tr = document.createElement('tr');
+                        tr.innerHTML = `
+                            <td>${cliente.id}</td>
+                            <td>${cliente.nome}</td>
+                            <td>${cliente.senha}</td>
+                            <td>${cliente.qtdMoeda}</td>
+                            <td>
+                                <button onclick="editCliente(${cliente.id})">Editar</button>
+                                <button onclick="deleteCliente(${cliente.id})">Apagar</button>
+                            </td>
+                        `;
+                        tbody.appendChild(tr);
+                    });
+                });
+        }
+
+        function addCliente() {
+            const nome = document.getElementById('nome').value;
+            const senha = document.getElementById('senha').value;
+            const qtdMoeda = document.getElementById('qtdMoeda').value;
+
+            fetch(`/cliente/${nome}/${senha}/${qtdMoeda}`, { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    loadClientes();
+                    document.getElementById('clienteForm').reset();
+                });
+        }
+
+        function editCliente(id) {
+            const qtdMoeda = prompt("Digite a quantidade de moedas:");
+            if (qtdMoeda !== null) {
+                fetch(`/cliente/${id}/${qtdMoeda}`, { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => loadClientes());
+            }
+        }
+
+        function deleteCliente(id) {
+            fetch(`/cliente/${id}`, { method: 'DELETE' })
+                .then(response => response.json())
+                .then(data => loadClientes());
+        }
+
+        function loadSeletores() {
+            fetch('/seletor')
+                .then(response => response.json())
+                .then(data => {
+                    const tbody = document.querySelector('#seletorTable tbody');
+                    tbody.innerHTML = '';
+                    data.forEach(seletor => {
+                        const tr = document.createElement('tr');
+                        tr.innerHTML = `
+                            <td>${seletor.id}</td>
+                            <td>${seletor.nome}</td>
+                            <td>${seletor.ip}</td>
+                            <td>
+                                <button onclick="editSeletor(${seletor.id})">Editar</button>
+                                <button onclick="deleteSeletor(${seletor.id})">Apagar</button>
+                            </td>
+                        `;
+                        tbody.appendChild(tr);
+                    });
+                });
+        }
+
+        function addSeletor() {
+            const nome = document.getElementById('nomeSeletor').value;
+            const ip = document.getElementById('ipSeletor').value;
+
+            fetch(`/seletor/${nome}/${ip}`, { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    loadSeletores();
+                    document.getElementById('seletorForm').reset();
+                });
+        }
+
+        function editSeletor(id) {
+            const nome = prompt("Digite o novo nome:");
+            const ip = prompt("Digite o novo IP:");
+            if (nome !== null && ip !== null) {
+                fetch(`/seletor/${id}/${nome}/${ip}`, { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => loadSeletores());
+            }
+        }
+
+        function deleteSeletor(id) {
+            fetch(`/seletor/${id}`, { method: 'DELETE' })
+                .then(response => response.json())
+                .then(data => loadSeletores());
+        }
+
+        function loadTransacoes() {
+            fetch('/transacoes')
+                .then(response => response.json())
+                .then(data => {
+                    const tbody = document.querySelector('#transacaoTable tbody');
+                    tbody.innerHTML = '';
+                    data.forEach(transacao => {
+                        const tr = document.createElement('tr');
+                        tr.innerHTML = `
+                            <td>${transacao.id}</td>
+                            <td>${transacao.remetente}</td>
+                            <td>${transacao.recebedor}</td>
+                            <td>${transacao.valor}</td>
+                            <td>${transacao.horario}</td>
+                            <td>${transacao.status}</td>
+                        `;
+                        tbody.appendChild(tr);
+                    });
+                });
+        }
+
+        function addTransacao() {
+            const remetente = document.getElementById('remetente').value;
+            const recebedor = document.getElementById('recebedor').value;
+            const valor = document.getElementById('valor').value;
+
+            fetch(`/transacoes/${remetente}/${recebedor}/${valor}`, { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    loadTransacoes();
+                    document.getElementById('transacaoForm').reset();
+                });
+        }
+    </script>
+</body>
+</html>
