@@ -17,7 +17,7 @@ class Cliente(db.Model):
     id: int
     nome: str
     senha: int
-    qtdMoeda: int
+    qtdMoeda: float
 
     id = db.Column(db.Integer, primary_key=True)
     nome = db.Column(db.String(20), unique=False, nullable=False)
@@ -49,6 +49,16 @@ class Transacao(db.Model):
     valor = db.Column(db.Integer, unique=False, nullable=False)
     horario = db.Column(db.DateTime, unique=False, nullable=False)
     status = db.Column(db.Integer, unique=False, nullable=False)
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'remetente': self.remetente,
+            'recebedor': self.recebedor,
+            'valor': self.valor,
+            'horario': self.horario.isoformat(),
+            'status': self.status
+        }
+    
 
 with app.app_context():
     db.create_all()
@@ -64,7 +74,7 @@ def ListarCliente():
         clientes = Cliente.query.all()
         return jsonify(clientes)  
 
-@app.route('/cliente/<string:nome>/<string:senha>/<int:qtdMoeda>', methods = ['POST'])
+@app.route('/cliente/<string:nome>/<string:senha>/<float:qtdMoeda>', methods = ['POST'])
 def InserirCliente(nome, senha, qtdMoeda):
     if request.method=='POST' and nome != '' and senha != '' and qtdMoeda != '':
         objeto = Cliente(nome=nome, senha=senha, qtdMoeda=qtdMoeda)
@@ -82,7 +92,7 @@ def UmCliente(id):
     else:
         return jsonify(['Method Not Allowed'])
 
-@app.route('/cliente/<int:id>/<int:qtdMoedas>', methods=["POST"])
+@app.route('/cliente/<int:id>/<float:qtdMoedas>', methods=["POST"])
 def EditarCliente(id, qtdMoedas):
     if request.method=='POST':
         try:
@@ -197,9 +207,13 @@ def CriaTransacao(rem, reb, valor):
         seletores = Seletor.query.all()
         for seletor in seletores:
             #Implementar a rota /localhost/<ipSeletor>/transacoes
-            url = seletor.ip + '/transacoes/'
-            requests.post(url, data=jsonify(objeto))
-        return jsonify(objeto)
+            url = "http://"+ seletor.ip + '/seletor/transacoes'
+            
+            data = objeto.to_dict()
+            
+            # Envia a requisição com o dicionário
+            requests.post(url, json=data)
+        return jsonify(objeto.to_dict())
     else:
         return jsonify(['Method Not Allowed'])
 
@@ -212,7 +226,7 @@ def UmaTransacao(id):
         return jsonify(['Method Not Allowed'])
 
 @app.route('/transacoes/<int:id>/<int:status>', methods=["POST"])
-def EditaTransacao(id, status):
+def EditarTransacao(id, status):
     if request.method=='POST':
         try:
             objeto = Transacao.query.filter_by(id=id).first()
