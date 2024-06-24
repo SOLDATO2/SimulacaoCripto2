@@ -10,13 +10,12 @@ import random
 app = Flask(__name__)
 job_queue = Queue()
 
-
 processing_thread = None
 
 relogio_atual = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
 validadores_cadastrados = []
 ultimos_escolhidos = []
-
+validadores_offlines = []
 Fila_de_espera = []
 validadores_que_sairam_da_fila = []
 ids_validadores_selecionados = []
@@ -40,41 +39,52 @@ class Validador():
     token:str
     vezes_expulso:int
     flag:int
+    n_transacao:int
     vezes_escolhido:int
     em_hold:bool
     foi_expulso_ultima_vez:bool
-    def __init__(self,id,saldo,ip,token, foi_expulso_ultima_vez):
+    def __init__(self,id,saldo,ip,token,foi_expulso_ultima_vez):
         self.id = id
         self.saldo = saldo
         self.ip = ip
         self.token = token
         self.vezes_expulso = 0
-        self.flag = 0
+        self.vezes_escolhido = 0
+        self.flag = 0 
+        self.n_transacao=0
         self.foi_expulso_ultima_vez = foi_expulso_ultima_vez
+        self.em_hold = False
 
     def escolhidoCincoVezes(self):
-        if self.vezes_escolhido==5 or self.em_hold:
-            self.em_hold=True
-            return True
-        else:
+        if self.vezes_escolhido<5:
             self.vezes_escolhido+=1
-            return False
-
+        if self.vezes_escolhido>=5 or self.em_hold:
+            self.em_hold=True
+        
     def contatadorHold(self):
         if self.em_hold:
             self.vezes_escolhido-=1
         if self.vezes_escolhido==0:
             self.em_hold=False
-
-    def zerarContador(self):
-        if self.em_hold == False:
             self.vezes_escolhido=0
+    
+    def zerarContador(self):
+        self.vezes_escolhido=0
 
     def incrementarFlag(self):
         self.flag+=1
+        self.n_transacao=0
         if self.flag > 2:
             self.vezes_expulso += 1
             self.foi_expulso_ultima_vez = True
+
+    def incrementarTransacao(self):
+        if(self.flag>0):
+            self.n_transacao+=1
+            if(self.n_transacao>=10000):
+                self.flag-=1
+                self.n_transacao=0
+
 
 #################### Funções do Seletor ############################
 
@@ -89,25 +99,31 @@ def process_jobs():
         process_job(job)
         job_queue.task_done()
             
-        
 def process_job(job):
+    global relogio_atual
+    relogio_atual = pegarRelogioBanco()
+    tempo_1_start = perf_counter()
+    
     print("Job recebido")
     validadores_validos = []
-
     # Request para obter o saldo do cliente
-    while True:
+    tentativas = 0 
+    while True: # Tolerancia a falha, caso o servidor nao responda, a job sai da fila 
         try:
-            response = rq.get(f"http://127.0.0.1:5000/cliente/{job['remetente']}")  # Solicitação GET para obter o cliente
-            if response.status_code == 200:
-                cliente_data = response.json()
-                saldo_cliente = cliente_data.get("qtdMoeda")
-                job["saldo"] = saldo_cliente
-                break 
-            else:
-                print("Falha ao obter o saldo do cliente. Código de status:", response.status_code)
-        except Exception as e:
-            print("Erro ao processar a solicitação:", e)
-            time.sleep(1)
+            response = rq.get(f"http://127.0.0.1:5000/cliente/{job['remetente']}")
+            cliente_data = response.json()
+            saldo_cliente = cliente_data.get("qtdMoeda")
+            job["saldo"] = saldo_cliente
+            break 
+            #else:
+                #print("Falha ao obter o saldo do cliente. Código de status:", response.status_code)
+        except:
+            tentativas+=1
+            print(f"Erro ao tentar obter saldo do cliente ao contatar banco. Timeout em {tentativas}/3")
+            if tentativas >= 3:
+                print("Job anulada/não executada")
+                return
+            sleep(2)
 
     for validador in Fila_de_espera:
         if validador.em_hold == False:
@@ -118,86 +134,230 @@ def process_job(job):
         segundos = 0
         while len(validadores_validos) < 3 and segundos != 60:
             for validador in Fila_de_espera:
-                if validador not in validadores_validos:
+                #if validador not in validadores_validos:
+                if (validador.em_hold == False) and (validador not in validadores_validos):
                     validadores_validos.append(validador)
-            time.sleep(1)
+            sleep(1)
             segundos += 1
             print(f"Segundos restantes: {segundos}")
                     
         if len(validadores_validos) < 3 and segundos == 60:
             print("Tempo esgotado, não foi possível validar a job pois não existem validadores válidos suficientes para validar a job")
-            #return "Job não validada"
-            #fazer post com status job 0
+            tempo_1_stop = perf_counter()
+            relogio_atual += timedelta(seconds=tempo_1_stop-tempo_1_start)
+            enviar_log_banco("Não foi possivel concluir a transacao pois o tempo de espera expirou.", relogio_atual)
             return
         
-
-        verificar_fila(validadores_validos)   
-        sincronismo_relogios(validadores_que_sairam_da_fila)
+        verificar_fila(validadores_validos)
+        tempo_1_stop = perf_counter()
+        relogio_atual += timedelta(seconds=tempo_1_stop-tempo_1_start)
+        enviar_log_banco(f"Validadores coletados da Fila de espera: {[validador.id for validador in validadores_que_sairam_da_fila]}", relogio_atual)
+        
+        tempo_2_start = perf_counter()
+        if sincronismo_relogios(validadores_que_sairam_da_fila) == False:
+            tempo_2_stop = perf_counter()
+            relogio_atual += timedelta(seconds=tempo_2_stop-tempo_2_start)
+            enviar_log_banco(f"Não existem validadores suficientes para continuar a validação do trabalho.", relogio_atual)
+            return
+        else:
+            tempo_2_stop = perf_counter()
+            relogio_atual += timedelta(seconds=tempo_2_stop-tempo_2_start)
+            enviar_log_banco(f"Validadores sincronizados.", relogio_atual)
+        
+        tempo_3_start = perf_counter()
         validadores_escolhidos = selecionar_validadores(validadores_que_sairam_da_fila) # retorna json dos validadores escolhidos
+        tempo_3_stop = perf_counter()
+        relogio_atual += timedelta(seconds=tempo_3_stop-tempo_3_start)
+        tempo_4_start = perf_counter()
+        enviar_log_banco(f"Validadores escolhidos para validar o trabalho: {validadores_escolhidos}.", relogio_atual)
+        
         colocar_na_fila(validadores_que_sairam_da_fila,validadores_escolhidos)
-        lista_consenso = enviar_job_validador(validadores_escolhidos,job)
+        tempo_4_stop = perf_counter()
+        relogio_atual += timedelta(seconds=tempo_4_stop-tempo_4_start)
+        
+        tempo_5_start = perf_counter()
+        lista_consenso = enviar_job_validador(validadores_escolhidos,job, relogio_atual)
+        tempo_5_stop = perf_counter()
+        relogio_atual += timedelta(seconds=tempo_5_stop-tempo_5_start)
+        enviar_log_banco(f"Trabalho enviado para os validadores.", relogio_atual)
+        
+        tempo_6_start = perf_counter()
         status_aprovacao =validar_consenso(lista_consenso)
-        #
-        #
-        #
-        #
+        tempo_6_stop = perf_counter()
+        relogio_atual += timedelta(seconds=tempo_6_stop-tempo_6_start)
+        enviar_log_banco(f"Consenso geral dos validadores: {status_aprovacao}.", relogio_atual)
     else:
         verificar_fila(validadores_validos)
-        sincronismo_relogios(validadores_que_sairam_da_fila)
+        tempo_1_stop = perf_counter()
+        relogio_atual += timedelta(seconds=tempo_1_stop-tempo_1_start)
+        enviar_log_banco(f"Validadores coletados da Fila de espera: {[validador.id for validador in validadores_que_sairam_da_fila]}", relogio_atual)
+        
+        tempo_2_start = perf_counter()
+        if sincronismo_relogios(validadores_que_sairam_da_fila) == False:
+            tempo_2_stop = perf_counter()
+            relogio_atual += timedelta(seconds=tempo_2_stop-tempo_2_start)
+            enviar_log_banco(f"Não existem validadores suficientes para continuar a validação do trabalho.", relogio_atual)
+            return
+        else:
+            tempo_2_stop = perf_counter()
+            relogio_atual += timedelta(seconds=tempo_2_stop-tempo_2_start)
+            enviar_log_banco(f"Validadores sincronizados.", relogio_atual)
+        
+        tempo_3_start = perf_counter()
         validadores_escolhidos = selecionar_validadores(validadores_que_sairam_da_fila) # retorna json dos validadores escolhidos
+        tempo_3_stop = perf_counter()
+        relogio_atual += timedelta(seconds=tempo_3_stop-tempo_3_start)
+        tempo_4_start = perf_counter()
+        enviar_log_banco(f"Validadores escolhidos para validar o trabalho: {validadores_escolhidos}.", relogio_atual)
+        
         colocar_na_fila(validadores_que_sairam_da_fila,validadores_escolhidos)
-        lista_consenso = enviar_job_validador(validadores_escolhidos,job)
+        tempo_4_stop = perf_counter()
+        relogio_atual += timedelta(seconds=tempo_4_stop-tempo_4_start)
+        
+        tempo_5_start = perf_counter()
+        lista_consenso = enviar_job_validador(validadores_escolhidos,job, relogio_atual)
+        tempo_5_stop = perf_counter()
+        relogio_atual += timedelta(seconds=tempo_5_stop-tempo_5_start)
+        enviar_log_banco(f"Trabalho enviado para os validadores.", relogio_atual)
+        
+        tempo_6_start = perf_counter()
         status_aprovacao =validar_consenso(lista_consenso)
-        #
-        #
-        #
-        #
-        #
-
+        tempo_6_stop = perf_counter()
+        relogio_atual += timedelta(seconds=tempo_6_stop-tempo_6_start)
+        enviar_log_banco(f"Consenso geral dos validadores: {status_aprovacao}.", relogio_atual)
+        
+    #limpa lista para proxima transacao
+    validadores_que_sairam_da_fila.clear()
+    tentativas=0
     while True:
         try:
             response = rq.post(f"http://127.0.0.1:5000/transacoes/{job['id']}/{status_aprovacao}")
-            if response.status_code == 200:
-                print("Modificação de transação enviada banco")
-                break
-        except rq.exceptions.RequestException as e:
-            print(f"Erro ao mandar informação ao banco: {e}")
+            print("Modificação de transação enviada banco")
+            break
+        except:
+            tentativas+=1
+            print(f"Erro ao tentar enviar o status da translação para o banco. Timeout em {tentativas}/3")
+            if tentativas>=3:
+                print("Erro ao enviar o status da translação para o banco.")
+                return
+            sleep(2)
 
     if status_aprovacao == 1:
-        # Tem que ser valor+taxas
         taxas = job["valor"] * 0.015
-    
         quantia_rem = job["saldo"] - (taxas + job["valor"])
-        response = rq.post(f"http://127.0.0.1:5000/cliente/{job['remetente']}/{quantia_rem}")
         
-        response = rq.get(f"http://127.0.0.1:5000/cliente/{job['recebedor']}")
-        cliente_data = response.json()
-        quantia_dest = cliente_data.get("qtdMoeda")
+        while True:
+            try:
+                response = rq.get(f"http://127.0.0.1:5000/cliente/{job['recebedor']}")
+                cliente_data = response.json()
+                quantia_dest = cliente_data.get("qtdMoeda")
+                break
+            except:
+                tentativas+=1
+                print(f"Erro ao tentar enviar o status da translação para o banco. Timeout em {tentativas}/3")
+                if tentativas>=3:
+                    print("Erro ao enviar o status da translação para o banco.")
+                    for validador in validadores_escolhidos:
+                        if (validador.foi_expulso_ultima_vez == False):
+                            Fila_de_espera.append(validador)
+                        else:
+                            url = 'http://' + validador.ip + '/validador/avisos'
+                            data = {'aviso':'Voce foi expulso por ma conduta.'}
+                            response = rq.post(url,json=data)
+                            n_validador_expulsos+=1
+                            
+                    validadores_offlines.clear()
+                    return
+                sleep(2)
         
         quantia_dest =  quantia_dest + (job["valor"])
-        response = rq.post(f"http://127.0.0.1:5000/cliente/{job['recebedor']}/{quantia_dest}")
-
+        dict_resposta_trabalho = {
+            "id_remetente": job['remetente'],
+            "id_destinatario": job['recebedor'],
+            "quantia_rem": quantia_rem,
+            "quantia_dest": quantia_dest
+        }
+        tentativas = 0
+        while True:
+            try:
+                response = rq.post(f"http://127.0.0.1:5000/transacoes/receberDadosAtualizados", json=dict_resposta_trabalho)
+                print("Dados enviados para o banco")
+                break
+            except:
+                tentativas+=1
+                print(f"Erro ao tentar enviar dados atualizados remetente/destinatario para o banco. Timeout em {tentativas}/3")
+                if tentativas>=3:
+                    print("Erro ao enviar o status dados para o banco.")
+                    return
+                sleep(2)
+            
         #recompensas
         seletor_atual.carteira_validador += job["valor"] * 0.005
-
-        for validor
         
+        n_validador_expulsos = 0
         for validador in validadores_cadastrados:
-            validador.contatadorHold()
+            if validador.id in validadores_escolhidos:
+                if validador.foi_expulso_ultima_vez:
+                    url = 'http://' + validador.ip + '/validador/avisos'
+                    data = {'aviso':'Voce foi expulso por ma conduta.'}
+                    response = rq.post(url,json=data)
+                    n_validador_expulsos+=1
+
+        #decrementa em hold para todos que estao no banco de dados (os que foram escolhidos nao tinham q se a excesao?)
+        for validador in validadores_cadastrados:
+            if validador.id not in validadores_escolhidos: # adicionei essa linha para decrementar o contador em hold apenas dos usuarios que não foram escolhidos
+                validador.contatadorHold()
 
         for validador in validadores_cadastrados:
             if validador.id in validadores_escolhidos:
-                validador.saldo += job["valor"] * 0.0033333
-                
-                Fila_de_espera.append(validador)
-                if validador in ultimos_escolhidos:
-                    validador.escolhidoCincoVezes()
+                if validador.foi_expulso_ultima_vez == False: #paga apenas quem n foi expulso
+                    validador.saldo += job["valor"] * (0.01/(3-n_validador_expulsos))
+                    if validador.id not in validadores_offlines:
+                        Fila_de_espera.append(validador)
+                    if validador not in ultimos_escolhidos:
+                        validador.zerarContador()
+                        validador.escolhidoCincoVezes()
+                    elif not ultimos_escolhidos:
+                        validador.escolhidoCincoVezes() 
+                    elif validador in ultimos_escolhidos:
+                        validador.escolhidoCincoVezes()
 
         ultimos_escolhidos.clear()
+        validadores_offlines.clear()
         for validador in validadores_cadastrados:
             if validador.id in validadores_escolhidos:
                 ultimos_escolhidos.append(validador)
+    else:
+        for validador in validadores_cadastrados:
+            if validador.id in validadores_escolhidos:
+                if validador.foi_expulso_ultima_vez:
+                    url = 'http://' + validador.ip + '/validador/avisos'
+                    data = {'aviso':'Voce foi expulso por ma conduta.'}
+                    response = rq.post(url,json=data)
 
+        #decrementa em hold para todos que estao no banco de dados (os que foram escolhidos nao tinham q se a excesao?)
+        for validador in validadores_cadastrados:
+            if validador.id not in validadores_escolhidos: # adicionei essa linha para decrementar o contador em hold apenas dos usuarios que não foram escolhidos
+                validador.contatadorHold()
+
+        for validador in validadores_cadastrados:
+            if validador.id in validadores_escolhidos:
+                if validador.foi_expulso_ultima_vez == False: #paga apenas quem n foi expulso
+                    if validador.id not in validadores_offlines:
+                        Fila_de_espera.append(validador)
+                    if validador not in ultimos_escolhidos:
+                        validador.zerarContador()
+                        validador.escolhidoCincoVezes()
+                    elif not ultimos_escolhidos:
+                        validador.escolhidoCincoVezes() 
+                    elif validador in ultimos_escolhidos:
+                        validador.escolhidoCincoVezes()
+
+        ultimos_escolhidos.clear()
+        validadores_offlines.clear()
+        for validador in validadores_cadastrados:
+            if validador.id in validadores_escolhidos:
+                ultimos_escolhidos.append(validador)
     return "Job validada"
         
         
@@ -210,35 +370,38 @@ def process_job(job):
 
 def selecionar_validadores(validadores_fila):
     id_validadores = []
-    pesos_validadores = []
+    
+    saldo_modificado = []
     for validador in validadores_fila:
-        if validadores_fila.flag==0:
+        if validador.flag==0:
             id_validadores.append(validador.id)
-            pesos_validadores.append(validador.saldo)     
-        elif validadores_fila.flag==1:
+            saldo_modificado.append(validador.saldo)     
+        elif validador.flag==1:
             id_validadores.append(validador.id)
-            pesos_validadores.append(validador.saldo*0.5)     
+            saldo_modificado.append(validador.saldo*0.5)     
         else:
             id_validadores.append(validador.id)
-            pesos_validadores.append(validador.saldo*0.25)     
+            saldo_modificado.append(validador.saldo*0.25)     
             
     #maior saldo
     escolhidos = []
+    pesos_validadores = [None]*(len(saldo_modificado))
     for n in range(3):
         maior = 0
-        for x in range(1,len(pesos_validadores)):
-            if pesos_validadores[maior]<pesos_validadores[x]:
+        for x in range(1,len(saldo_modificado)):
+            if saldo_modificado[maior]<saldo_modificado[x]:
                 maior = x
 
-        pesos_validadores[x] = 20
+        pesos_validadores[maior] = 20.0
         #distribuição comforme saldo
         total_pesos=0
-        for x in range(0,len(pesos_validadores)):
+        for x in range(0,len(saldo_modificado)):
+            total_pesos+=saldo_modificado[x]
+        for x in range(0,len(saldo_modificado)):
             if x != maior:
-                total_pesos+=pesos_validadores[x]
-        for x in range(0,len(pesos_validadores)):
-            if x != maior:
-                pesos_validadores[x] = (pesos_validadores[x]/total_pesos)*100
+                pesos_validadores[x] = (saldo_modificado[x]/total_pesos)*(20*len(saldo_modificado))
+                if pesos_validadores[x]>=20:
+                    pesos_validadores[x]=20
 
         #Sorteio 3 validadores
         
@@ -248,8 +411,8 @@ def selecionar_validadores(validadores_fila):
             if id_validadores[x] == escolhido:
                 break
         pesos_validadores.pop(x)
+        saldo_modificado.pop(x)
         id_validadores.pop(x)
-
 
     return escolhidos
 
@@ -258,25 +421,59 @@ def colocar_na_fila(validadores,ids_escolhidos):
         if validador.id not in ids_escolhidos:
             Fila_de_espera.append(validador)
 
-def enviar_job_validador(id_validadores,job):
+def enviar_job_validador(id_validadores,job, relogio_atual):
     lista_consenso = []
+    global validadores_offlines
     for validador in validadores_cadastrados:
+        tempo1 = perf_counter()
         if validador.id in id_validadores:
-            url = "http://"+validador.ip+"/validador/validarJob"
-            resposta = rq.post(url,json=job)
-            lista_consenso.append(resposta)
-         
+            tentativas = 0
+            while True: # tolerancia a falha, se validador nao responder, anula a job do validador
+                try:
+                    url = "http://"+validador.ip+"/validador/validarJob"
+                    resposta = rq.post(url,json=job)
+                    print(resposta)
+                    resposta = resposta.json()
+                    consenso_dict = {
+                        "id_validador": str(resposta.get('id_validador')),
+                        "token": resposta.get('token'),
+                        "status": resposta.get('status')
+                    }
+                    lista_consenso.append(consenso_dict)
+                    break
+                except:
+                    tentativas+=1
+                    if tentativas>=3:
+                        consenso_dict = {
+                        "id_validador":validador.id,
+                        "token":"invalido",
+                        "status":0
+                        }
+                        print(f"Validador ~{validador.id}~ Não respondeu as 3 tentativas, invalidando seu status")
+                        tempo2 = perf_counter()
+                        relogio_atual += timedelta(seconds=tempo2-tempo1)
+                        enviar_log_banco(f"Não foi possivel enviar trabalho para o validador ~{validador.id}~, definindo status para 0.", relogio_atual)
+                        lista_consenso.append(consenso_dict)
+                        validadores_offlines.append(validador.id)
+                        break
+                    print(f"Validador ~{validador.id}~ Não responde, timeout em {tentativas}/3")
+                    sleep(2)
+                       
     return lista_consenso
-
 
 def validar_consenso(lista_consenso):
     sucessos = 0
     falhas = 0
     invalido = 0
-
     for verificacao in lista_consenso:
+        print(type(verificacao['id_validador']))
+        print(verificacao['status'])
+        print(verificacao["token"])
+        
         for validador in validadores_cadastrados:
-            if validador.id in verificacao['id_validor']:
+            print(type(validador.id))
+            print(validador.token)
+            if validador.id == verificacao['id_validador']:
                 if verificacao["token"] == validador.token:
                     if verificacao['status']==1:
                         sucessos+=1
@@ -288,26 +485,35 @@ def validar_consenso(lista_consenso):
                     verificacao['status'] = 0
                     invalido += 1
 
+    print("Sucessos:",sucessos)
+    print("Falhas:",falhas)
+    print("Invalidos:",invalido)
+    
     if sucessos>falhas and sucessos>invalido:
         for verificacao in lista_consenso:
             for validador in validadores_cadastrados:
-                if validador.id in verificacao['id_validor']:
+                if validador.id  == verificacao['id_validador']:
                     if verificacao["token"] == validador.token:
-                        if verificacao['status']==2:
+                        if verificacao['status']==1:
+                            validador.incrementarTransacao()
+                        elif verificacao['status']==2:
                             validador.incrementarFlag()
+        print("Job validada com sucesso (sucessos>falhas and sucessos>invalido) ")
         return 1
     elif (falhas>sucessos and falhas>invalido) or sucessos==falhas:
         for verificacao in lista_consenso:
             for validador in validadores_cadastrados:
-                if validador.id in verificacao['id_validor']:
+                if validador.id  == verificacao['id_validador']:
                     if verificacao["token"] == validador.token:
                         if verificacao['status']==1:
                             validador.incrementarFlag()
+                        elif verificacao['status']==2:
+                            validador.incrementarTransacao()
+        print("Job NAO validada com sucesso POR CAUSA DE EMPATE ou FALHA")
         return 2
     elif invalido > sucessos and invalido > falhas and sucessos == 0 and falhas == 0:
+        print("Job invalidada POR CAUSA DE MUITAS RESPOSTAS INVALIDAS")
         return 0
-
-
 
 def verificar_fila(validadores_validos):
 
@@ -331,32 +537,65 @@ def verificar_fila(validadores_validos):
             #guarda ids para verificar se o id existe no banco ao receber a resposta da validacao 
             ids_validadores_selecionados.append(validador.id)
         
-
-
 def enviarRelogio(validador_atual,relogio_final):
-    tempo_1 = perf_counter()
-    response = rq.post(f"http://{validador_atual.ip}/validador/receberRelogio",json={'relogio': relogio_final})
-    if response.status_code == 200:
-        tempo_2 = perf_counter()
-        correcao_cristian = tempo_2 - tempo_1
-        response = rq.post(f"http://{validador_atual.ip}/validador/receberAtraso",json={'atraso': correcao_cristian})
+    tentativas_a = 0
+    while True:
+        try:
+            tempo_1 = perf_counter()
+            response = rq.post(f"http://{validador_atual.ip}/validador/receberRelogio",json={'relogio': str(relogio_final)}) #enviar relogio para validador 
+            if response.status_code == 200:
+                tempo_2 = perf_counter()
+                correcao_cristian = (tempo_2 - tempo_1)/2
+                tentativas_b = 0
+                while True:
+                    tempo_3_start = perf_counter()
+                    try:
+                        response = rq.post(f"http://{validador_atual.ip}/validador/receberAtraso",json={'atraso': correcao_cristian})
+                        tempo_3_stop = perf_counter()
+                        return
+                    except:
+                        tentativas_b+=1
+                        print(f"Erro ao tentar enviar atraso de relogio ao validador ~{validador_atual.id}~. Timeout em {tentativas_b}/3")
+                        if tentativas_b >= 3:
+                            validadores_que_sairam_da_fila.remove(validador_atual)
+                            tempo_3_stop = perf_counter()
+                            relogio_final += timedelta(seconds=tempo_3_stop-tempo_3_start)
+                            enviar_log_banco(f"Validador {validador_atual.id} foi removido da eleição por perda de conexão", relogio_final)
+                            print(f"Sincronizo não realizado com validador {validador_atual.id}")
+                            return False
+                        sleep(2)       
+        except:
+            tentativas_a+=1
+            print(f"Erro ao tentar enviar relogio ao validador ~{validador_atual.id}~. Timeout em {tentativas_a}/3")
+            if tentativas_a >= 3:
         
+                validadores_que_sairam_da_fila.remove(validador_atual)
+                print(f"Sincronizo não realizado com validador {validador_atual.id}")
+                return False
+            sleep(2)     
 
-    
 def pegarRelogioBanco():
-    tempo_1 = perf_counter()
-    response = rq.get("http://127.0.0.1:5000/hora")
-    tempo_2 = perf_counter()
-    correcao_cristian = tempo_2 - tempo_1
-    relogio = response.json()
-    relogio_final = datetime.strptime(relogio, '%Y-%m-%d %H:%M:%S.%f') + timedelta(seconds=correcao_cristian)
-    print(relogio_final)
-    #################
-    #2024-06-11 00:19:45.906937
-    ################
-    return relogio_final
-
-               
+    tentativas = 0
+    while True:
+        try:
+            tempo_1 = perf_counter()
+            response = rq.get("http://127.0.0.1:5000/hora")
+            tempo_2 = perf_counter()
+            correcao_cristian = (tempo_2 - tempo_1)/2
+            relogio = response.json()
+            relogio_final = datetime.strptime(relogio, '%Y-%m-%d %H:%M:%S.%f') + timedelta(seconds=correcao_cristian)
+            print(relogio_final)
+            #################
+            #2024-06-11 00:19:45.906937
+            ################
+            return relogio_final
+        except:
+            tentativas+=1
+            print(f"Erro ao tentar obter relogio do banco. Timeout em {tentativas}/3")
+            if tentativas >= 3:
+                print("Job anulada/não executada")
+                return False
+            sleep(2)
 
 def sincronismo_relogios(lista_validadores): 
     lista_validadores
@@ -364,77 +603,40 @@ def sincronismo_relogios(lista_validadores):
 
     ###SINCRONIZAR
     relogio_atual = pegarRelogioBanco()
-    for validador in lista_validadores:
-        enviarRelogio(validador,relogio_atual)
+    if relogio_atual != False:
+        for validador in lista_validadores:
+            enviarRelogio(validador,relogio_atual)
+        if len(validadores_que_sairam_da_fila)<3:
+            for validador in validadores_que_sairam_da_fila:
+                Fila_de_espera.append(validador)
+            validadores_que_sairam_da_fila.clear()
+            print("Não existem validadores suficientes para continuar a validação do trabalho.")
+            return False
+    else:
+        return False
     ####FIM DA SINCRONIZAÇÃO    
     ##print(f'Rotas coletadas da fila: {len(validadores)}')
-       
     #log = f"Relogios dos seguintes validadores foram sincronizados usando o modelo de c: {lista_validadores}"
     #log = f"IDs foram distribuidos para os seguintes validadores: {lista_validadores}"
     #enviar_log_banco(log)   
-                
-                
-                            
-    
-    
-    
-    """
-    #adicionar +1 para vezes_escolhido_seguido e verifica se deve ser inserido no hold
-    for validador in validadores_escolhidos:
-        banco[validador["id_validador"]]["vezes_escolhido_seguido"] += 1
-        if banco[validador["id_validador"]]["vezes_escolhido_seguido"] == 5:
-            #adicionar validador em hold
-            banco[validador["id_validador"]]["emHold"] = 5
-    
-    #resetar contador de escolhidos seguidos no banco e diminuir hold
-    existe_in_lista = False
-    for id_validador in banco: 
-        
-        for validador in validadores_escolhidos:
-            if id_validador == validador["id_validador"]:
-                existe_in_lista = True
-                break
-        
-        if existe_in_lista == False:
-            banco[id_validador]["vezes_escolhido_seguido"] = 0
-    
-        if banco[id_validador]["emHold"] > 0 and existe_in_lista == False:
-            banco[id_validador]["emHold"] -=1
-        
-    
-    
-    
-    
-    
-    log = f"Foram escolhidos os seguintes validadores para validar a job do remetente '{job["id_remetente"]}': {lista_validadores}"
-    #enviar_log_banco(log)   
-    print(validadores_escolhidos)
-    #adicionando validadores que nao foram escolhidos no inicio da fila de espera
-    for validador in lista_validadores:
-        existe = any(dicionario.get("id_validador") == validador["id_validador"] for dicionario in validadores_escolhidos)
-        if not existe:
-            print(f"validador {validador['id_validador']} não foi escolhido, portanto irá ser inserido no início da fila novamente")
-            Fila_de_espera.insert(0, validador)
-    
-    
-    #mandar job para validadores escolhidos
-    print("Validadores escolhidos que estão recebendo a job", validadores_escolhidos)
-    for validador in validadores_escolhidos:
-        while True:
+def enviar_log_banco(log, horario):
+    #envia logs para banco porem caso o banco nao consiga receber, o programa ira continuar funcionando normalmente
+    tentativas = 0
+    horario_str = horario.strftime('%Y-%m-%d %H:%M:%S')
+    while True:
             try:
-                response = requests.post(validador["rota"] + '/validar_job', json=job)
-                if response.status_code == 200:
-                    print(f"Id enviado para {validador["rota"]}")
-                    break 
-            except requests.exceptions.RequestException as e:
-                print(f"Erro ao conectar à rota {validador["rota"]}: {e}")
-                print("Tentando novamente...")
-    
-    log = f"A job do remetente '{job["id_remetente"]}' foi enviada para os seguintes validadores: {lista_validadores}"
-    #enviar_log_banco(log)
+                rq.post(f"http://127.0.0.1:5000/transacoes/log", json={"log": log, "horario":horario_str})
+                print("Log enviado ao banco")
+                break
+            except rq.exceptions.RequestException as e:
+                print(e)
+                tentativas+=1
+                print(f"Erro ao tentar enviar o status da translação para o banco. Timeout em {tentativas}/3")
+                if tentativas>=3:
+                    print("Erro ao enviar Log para o banco. Continuando com a transação..")
+                    break
+                sleep(2)
 
- """
-     
 #############################################################################################
 #############################################################################################     
         
@@ -448,13 +650,12 @@ def cadastrar_seletor_banco(seletor_atual):
         except rq.exceptions.RequestException as e:
             print(f"Erro ao se cadastrar Seletor no banco: {e}")
 
-
 #################### Rotas Flask do Seletor ############################    
 
 @app.route('/seletor/cadastrarValidador', methods=["POST"])
 def cadastrarValidador():
     dados_receber = request.json
-    id = dados_receber.get('id')
+    id = str(dados_receber.get('id'))
     saldo = dados_receber.get('saldo')
     ip = dados_receber.get('ip')
 
@@ -465,10 +666,11 @@ def cadastrarValidador():
             return resposta
         else:
             #criando o objeto validador
-            id  = len(validadores_cadastrados) + 1
+            id  = str(len(validadores_cadastrados) + 1)
             if len(validadores_cadastrados) > 0:
-                token_igual = False
+                token_igual = True
                 while token_igual:
+                    token_igual = False
                     token = str(uuid.uuid1())
                     for validador in validadores_cadastrados:
                         if validador.token == token:
@@ -476,10 +678,12 @@ def cadastrarValidador():
                 print(token)
             else:
                 token = str(uuid.uuid1())
-            validador = Validador(id=id, saldo=saldo, ip=ip, token=token)
+    
+            validador = Validador(id=id, saldo=saldo, ip=ip, token=token, foi_expulso_ultima_vez=False)
+            
             validadores_cadastrados.append(validador)
             Fila_de_espera.append(validador)
-            resposta = make_response(validador.token+" "+validador.id)
+            resposta = make_response(validador.token+" "+str(validador.id))
             resposta.headers['Content-type'] = 'text/plain'
             return resposta
     else:
@@ -497,12 +701,12 @@ def cadastrarValidador():
             if validador_encontrado.vezes_expulso <= 2 and validador_encontrado.vezes_expulso > 0:
                 if validador_encontrado.foi_expulso_ultima_vez == True:       # se foi expulso, verificar se novo saldo
                     if validador_encontrado.vezes_expulso == 1:
-                        if not (saldo > 100 ):
+                        if (saldo < 100 ):
                             resposta = make_response("Saldo insuficiente")
                             resposta.headers['Content-type'] = 'text/plain'
                             return resposta
                     elif validador_encontrado.vezes_expulso == 2:
-                        if not (saldo > 200):
+                        if (saldo < 200):
                             resposta = make_response("Saldo insuficiente")
                             resposta.headers['Content-type'] = 'text/plain'
                             return resposta        
@@ -510,13 +714,20 @@ def cadastrarValidador():
                 resposta = make_response("Validador foi banido permamentemente do banco")
                 resposta.headers['Content-type'] = 'text/plain'
                 return resposta
+            #teste se existe outro validador ligado em outra rota
+            for validador in Fila_de_espera:
+                if validador.id == id:
+                    resposta = make_response("Validador ja esta na Fila")
+                    resposta.headers['Content-type'] = 'text/plain'
+                    return resposta
             #se estiver tudo ok, ele cadastra na fila de espera
+            validador_encontrado.ip = ip
             Fila_de_espera.append(validador_encontrado)
             resposta = make_response(validador_encontrado.token+" "+validador_encontrado.id)
             resposta.headers['Content-type'] = 'text/plain'
             return resposta
         else:
-            resposta = make_response("Validador não existe no banco de dados do seletor")
+            resposta = make_response("Validador nao existe no banco de dados do seletor")
             resposta.headers['Content-type'] = 'text/plain'
             return resposta
     
@@ -539,8 +750,8 @@ with app.app_context():
 
 if __name__ == "__main__":
     
-    #processing_thread = threading.Thread(target=process_jobs)
-    #processing_thread.daemon = True
-    #processing_thread.start()
+    processing_thread = threading.Thread(target=process_jobs)
+    processing_thread.daemon = True
+    processing_thread.start()
     
     app.run(host='127.0.0.1', port=5001)

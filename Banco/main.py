@@ -1,3 +1,6 @@
+import os
+from queue import Queue
+import threading
 from time import time
 from flask import Flask, request, redirect, render_template, jsonify
 from flask_sqlalchemy import SQLAlchemy
@@ -6,7 +9,13 @@ from dataclasses import dataclass
 from datetime import date, datetime
 import requests
 
+#Rota adicional "/transacoes/receberDadosAtualizados" criada
+#Rota adicional "/transacoes/log" criada
+
 app = Flask(__name__)
+
+log_queue = Queue()
+processing_thread = None
 
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///site.db'
 db = SQLAlchemy(app)
@@ -58,7 +67,37 @@ class Transacao(db.Model):
             'horario': self.horario.isoformat(),
             'status': self.status
         }
-    
+
+def process_logs():
+    while True:
+        log = log_queue.get()
+        if log is None:
+            break
+        process_log(log)
+        log_queue.task_done()
+
+def process_log(log):
+    log_mensagem = log.get('log')
+    horario = log.get('horario')
+    if os.path.exists("logs.txt"):
+        with open("logs.txt", 'r+') as arquivo:
+            linhas = arquivo.readlines()
+            encontrou_linha_vazia = False
+        
+            for i, linha in enumerate(linhas):
+                if linha.strip() == '':
+                    linhas[i] = f"[{horario}]: {log_mensagem}\n"
+                    encontrou_linha_vazia = True
+                    break
+            
+            if encontrou_linha_vazia:
+                arquivo.seek(0)
+                arquivo.writelines(linhas)
+            else:
+                arquivo.write(f"[{horario}]: {log_mensagem}\n")
+    else:
+        with open("logs.txt", 'w') as arquivo:
+            arquivo.write(f"[{horario}]: {log_mensagem}\n")
 
 with app.app_context():
     db.create_all()
@@ -74,7 +113,7 @@ def ListarCliente():
         clientes = Cliente.query.all()
         return jsonify(clientes)  
 
-@app.route('/cliente/<string:nome>/<string:senha>/<float:qtdMoeda>', methods = ['POST'])
+@app.route('/cliente/<string:nome>/<string:senha>/<int:qtdMoeda>', methods = ['POST'])
 def InserirCliente(nome, senha, qtdMoeda):
     if request.method=='POST' and nome != '' and senha != '' and qtdMoeda != '':
         objeto = Cliente(nome=nome, senha=senha, qtdMoeda=qtdMoeda)
@@ -242,7 +281,46 @@ def EditarTransacao(id, status):
             return jsonify(data)
     else:
         return jsonify(['Method Not Allowed'])
+    
+@app.route('/transacoes/receberDadosAtualizados', methods=["POST"]) #ROTA NOVA
+def receberDadosAtualizados():
+    if request.method=='POST':
+        dados = request.json
+        print(dados)
+        id_remetente = dados.get('id_remetente')
+        quantia_rem = dados.get('quantia_rem')
+        id_destinatario = dados.get('id_destinatario')
+        quantia_dest = dados.get('quantia_dest')
+        try:
+            cliente = Cliente.query.filter_by(id=id_destinatario).first()
+            cliente.qtdMoeda = quantia_dest
+            db.session.commit()
+            
+            remetente = Cliente.query.filter_by(id=id_remetente).first()
+            remetente.qtdMoeda = quantia_rem
+            db.session.commit()
+            
+            return jsonify(['Alteração feita com sucesso'])
+        except Exception as e:
+            data={
+                "message": "Atualização não realizada"
+            }
+            return jsonify(data)
 
+    else:
+        return jsonify(['Method Not Allowed'])
+
+@app.route('/transacoes/log', methods=["POST"]) #ROTA NOVA
+def log():
+    if request.method=='POST':
+            log = request.json
+            log_queue.put(log)
+            
+            return "Recebi um log"
+    else:
+        return jsonify(['Method Not Allowed'])
+    
+    
 @app.errorhandler(404)
 def page_not_found(error):
     return render_template('page_not_found.html'), 404
@@ -250,5 +328,10 @@ def page_not_found(error):
 if __name__ == "__main__":
 	with app.app_context():
 		db.create_all()
+  
+processing_thread = threading.Thread(target=process_logs)
+processing_thread.daemon = True
+processing_thread.start()
+        
     
 app.run(host='127.0.0.1', port=5000, debug=True)

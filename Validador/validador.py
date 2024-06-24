@@ -1,9 +1,13 @@
+from queue import Queue
 import socket
-from flask import Flask,jsonify,request
+import threading
+from flask import Flask,jsonify, make_response,request
 from datetime import time,datetime,timedelta
 import requests as rq
 
 app = Flask(__name__)
+aviso_queue = Queue()
+processing_thread = None
 PORTA = 5002
 RELOGIO_SISTEMA = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
 TOKEM = ""
@@ -17,7 +21,7 @@ class Remetente():
     time_stamp:datetime # horario em que ele foi adicionado a lista de restricao
 
     def __init__(self,horario):
-        self.qnt_transacoes_ultimo_min=1
+        self.qnt_transacoes_ultimo_min=0
         self.horario_inicio=horario
         self.restrito =  False
 
@@ -39,13 +43,63 @@ class Remetente():
                 return self.restrito
         else:
             self.horario_inicio = horario
-            self.qnt_transacoes_ultimo_min=0
+            self.qnt_transacoes_ultimo_min=1
         return self.restrito
 
 
 
 dict_remetente = {}
 
+def process_avisos():
+    while True:
+        aviso = aviso_queue.get()
+        if aviso is None:
+            break
+        process_aviso(aviso)
+        aviso_queue.task_done()
+        
+def process_aviso(aviso):
+    global TOKEM
+    global ID
+    if aviso.get('aviso') == "Voce foi expulso por ma conduta.":
+        while True:
+            id = input("Digite o seu id, caso contrario não digite nada: ")
+            saldo = float(input("Digite um saldo para depositar: "))
+            ip = f"127.0.0.1:{PORTA}"
+
+            #####
+            conectado = False
+            tentativas = 0
+            while True:
+                try:
+                    response = rq.post("http://127.0.0.1:5001/seletor/cadastrarValidador", json={'id': id, 'saldo': saldo, 'ip': ip})
+                    
+                    if response.text == 'Saldo insuficiente':
+                        print("Você digitou um saldo insuficiente.")
+                    elif response.text == 'Validador foi banido permamentemente do banco':
+                        print("Você foi banido permamentemente do banco.")
+                    elif response.text == "Validador nao existe no banco de dados do seletor":
+                        print("Seu id não foi encontrado no banco do seletor")
+                    elif response.text == "Validador ja esta na Fila":
+                        print("Validador ja esta na Fila")
+                    else:
+                        mensagem = response.text
+                        split_da_mensagem = mensagem.split(sep=" ")
+                        TOKEM = split_da_mensagem[0]
+                        ID = split_da_mensagem[1]
+                        print("TOKEN RECEBIDO - >", TOKEM)
+                        print("ID RECEBIDO - >", ID)
+                        conectado = True
+                    break
+                except:
+                    tentativas+=1
+                    print(f"Não foi possivel enviar dados para o seletor. Timeout em Timeout em {tentativas}/3")
+                    if tentativas >= 3:
+                        break
+            if conectado == True:
+                break
+    
+    
 
 def find_available_port(PORTA): # ACHA UMA PORTA DISPONÍVEL PARA O VALIDADOR
     port = PORTA
@@ -66,19 +120,37 @@ with app.app_context():
         id = input("Digite o seu id, caso contrario não digite nada: ")
         saldo = float(input("Digite um saldo para depositar: "))
         ip = f"127.0.0.1:{PORTA}"
-        response = rq.post("http://127.0.0.1:5001/seletor/cadastrarValidador", json={'id': id, 'saldo': saldo, 'ip': ip})
-        
-        if response.text == 'Saldo insuficiente':
-            print("Você digitou um saldo insuficiente.")
-        elif response.text == 'Validador foi banido permamentemente do banco':
-            print("Você foi banido permamentemente do banco.")
-        elif response.text == "Validador não existe no banco de dados do seletor":
-            print("Seu id não foi encontrado no banco do seletor")
-        else:
-            mensagem = response.text
-            split_da_mensagem = mensagem.split(sep=" ")
-            TOKEM = split_da_mensagem[0]
-            ID = split_da_mensagem[1]
+
+        #####
+        conectado = False
+        tentativas = 0
+        while True:
+            try:
+                response = rq.post("http://127.0.0.1:5001/seletor/cadastrarValidador", json={'id': id, 'saldo': saldo, 'ip': ip})
+                
+                if response.text == 'Saldo insuficiente':
+                    print("Você digitou um saldo insuficiente.")
+                elif response.text == 'Validador foi banido permamentemente do banco':
+                    print("Você foi banido permamentemente do banco.")
+                elif response.text == "Validador nao existe no banco de dados do seletor":
+                    print("Seu id não foi encontrado no banco do seletor")
+                elif response.text == "Validador ja esta na Fila":
+                    print("Validador ja esta na Fila")
+                else:
+                    mensagem = response.text
+                    split_da_mensagem = mensagem.split(sep=" ")
+                    TOKEM = split_da_mensagem[0]
+                    ID = split_da_mensagem[1]
+                    print("TOKEN RECEBIDO - >", TOKEM)
+                    print("ID RECEBIDO - >", ID)
+                    conectado = True
+                break
+            except:
+                tentativas+=1
+                print(f"Não foi possivel enviar dados para o seletor. Timeout em Timeout em {tentativas}/3")
+                if tentativas >= 3:
+                    break
+        if conectado == True:
             break
     
 @app.route('/validador/receberRelogio', methods=["POST"])
@@ -107,17 +179,20 @@ def receberAtraso():
 
 @app.route('/validador/validarJob', methods=["POST"])
 def validarJob():
+    global HORARIO_ULTIMA_TRANSACAO, ID, TOKEM, RELOGIO_SISTEMA
     job = request.json
     remetente=job.get('remetente') # id remetente
     recebedor=job.get('recebedor') # id destinatario
     valor=job.get('valor')
     saldo=job.get('saldo')
     status=2
-    horario=datetime.strptime(job.get('horario'),'%Y-%m-%d %H:%M:%S.%f')
+    split_horario = job.get('horario').split(sep='T')
+    horario = split_horario[0]+" "+split_horario[1]
+    horario=datetime.strptime(horario,'%Y-%m-%d %H:%M:%S.%f')
     
     if remetente == "" or valor == "" or saldo == "" or horario == "":
         status = 0
-        retornar_job = {"id_validor": ID,"token":TOKEM,"status":status}
+        retornar_job = {"id_validador": ID,"token":TOKEM,"status":status}
         return jsonify(retornar_job)
     
     
@@ -125,11 +200,11 @@ def validarJob():
         dict_remetente[remetente] = Remetente(horario)
         
     if dict_remetente[remetente].um_minuto(horario):                     #verifica se remetente pode ser removido da lista de restricao
-        retornar_job = {"id_validor": ID,"token":TOKEM,"status":status}  #caso contrario retorna a job com status 2
+        retornar_job = {"id_validador": ID,"token":TOKEM,"status":status}  #caso contrario retorna a job com status 2
         return jsonify(retornar_job)
         
     if dict_remetente[remetente].contCem(horario):                       #Verifica se remetente fez mais de 100 transacoes no ultimo min
-        retornar_job = {"id_validor": ID,"token":TOKEM,"status":status}  #se passou de 100, retorna status 2
+        retornar_job = {"id_validador": ID,"token":TOKEM,"status":status}  #se passou de 100, retorna status 2
         return jsonify(retornar_job)
         
     if saldo >= valor*(1.015): #validar saldo + taxas
@@ -140,11 +215,22 @@ def validarJob():
                     HORARIO_ULTIMA_TRANSACAO = horario
                 status=1
     
-    retornar_job = {"id_validor": ID,"token":TOKEM,"status":status}
+    retornar_job = {"id_validador": ID,"token":TOKEM,"status":status}
+    print(retornar_job)
     return jsonify(retornar_job)
 
+@app.route('/validador/avisos', methods=["POST"])
+def avisos():
+    aviso = request.json
+    aviso_queue.put(aviso)
+    
+    return "Recebi um aviso"
     
 
 if __name__ == "__main__":
     
-    app.run(host='127.0.0.1', port=PORTA)
+    processing_thread = threading.Thread(target=process_avisos)
+    processing_thread.daemon = True
+    processing_thread.start()
+    
+    app.run(host='127.0.0.1', port=PORTA, debug=True,use_reloader=False)
