@@ -1,0 +1,14 @@
+FROM python:latest
+
+COPY Validador/validador.py /
+
+
+
+RUN pip install queuelib
+RUN pip install flask
+RUN pip install datetime
+RUN pip install requests
+RUN pip install Thread
+#RUN pip install random
+
+CMD [ "python", "./validador.py" ]

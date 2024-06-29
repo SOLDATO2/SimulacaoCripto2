@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import os
 from queue import Queue
 from time import perf_counter, sleep
 from flask import Flask,jsonify, make_response,request
@@ -110,7 +112,7 @@ def process_job(job):
     tentativas = 0 
     while True: # Tolerancia a falha, caso o servidor nao responda, a job sai da fila 
         try:
-            response = rq.get(f"http://127.0.0.1:5000/cliente/{job['remetente']}")
+            response = rq.get(f"http://main_banco_container:5000/cliente/{job['remetente']}")
             cliente_data = response.json()
             saldo_cliente = cliente_data.get("qtdMoeda")
             job["saldo"] = saldo_cliente
@@ -231,7 +233,7 @@ def process_job(job):
     tentativas=0
     while True:
         try:
-            response = rq.post(f"http://127.0.0.1:5000/transacoes/{job['id']}/{status_aprovacao}")
+            response = rq.post(f"http://main_banco_container:5000/transacoes/{job['id']}/{status_aprovacao}")
             print("Modificação de transação enviada banco")
             break
         except:
@@ -248,7 +250,7 @@ def process_job(job):
         
         while True:
             try:
-                response = rq.get(f"http://127.0.0.1:5000/cliente/{job['recebedor']}")
+                response = rq.get(f"http://main_banco_container:5000/cliente/{job['recebedor']}")
                 cliente_data = response.json()
                 quantia_dest = cliente_data.get("qtdMoeda")
                 break
@@ -280,7 +282,7 @@ def process_job(job):
         tentativas = 0
         while True:
             try:
-                response = rq.post(f"http://127.0.0.1:5000/transacoes/receberDadosAtualizados", json=dict_resposta_trabalho)
+                response = rq.post(f"http://main_banco_container:5000/transacoes/receberDadosAtualizados", json=dict_resposta_trabalho)
                 print("Dados enviados para o banco")
                 break
             except:
@@ -368,7 +370,7 @@ def process_job(job):
 # 
 ##################################Funções dos jobs###################################
 
-def selecionar_validadores(validadores_fila):
+""" def selecionar_validadores(validadores_fila):
     id_validadores = []
     
     saldo_modificado = []
@@ -414,51 +416,94 @@ def selecionar_validadores(validadores_fila):
         saldo_modificado.pop(x)
         id_validadores.pop(x)
 
-    return escolhidos
+    return escolhidos """
+    
+    
+def selecionar_validadores(validadores_fila):
+
+    validadores_disponiveis = validadores_fila
+
+    # Calcula os pesos com base no saldo e nas flags
+    pesos_validadores = []
+    for v in validadores_disponiveis:
+        if v.flag == 0:
+            peso = 1.0  # Sem redução
+        elif v.flag == 1:
+            peso = 0.5  # Redução de 50%
+        else:
+            peso = 0.25  # Redução de 75%
+        pesos_validadores.append(peso * v.saldo)
+
+    # Limita os pesos a no máximo 20
+    total_pesos = sum(pesos_validadores)
+    pesos_validadores = [min(peso / total_pesos * 20, 20) for peso in pesos_validadores]
+
+    # Escolhe 3 validadores aleatoriamente com base nos pesos
+    escolhidos = set()
+    while len(escolhidos) < 3:
+        escolhido = random.choices(validadores_disponiveis, weights=pesos_validadores, k=1)[0]
+        escolhidos.add(escolhido)
+        index = validadores_disponiveis.index(escolhido)
+        validadores_disponiveis.pop(index)
+        pesos_validadores.pop(index)
+
+    return [v.id for v in escolhidos]
 
 def colocar_na_fila(validadores,ids_escolhidos):
     for validador in validadores:
         if validador.id not in ids_escolhidos:
             Fila_de_espera.append(validador)
+            
+  
+def enviar_request(validador, job, relogio_atual):
+    url = f"http://{validador.ip}/validador/validarJob"
+    tentativas = 0
+    tempo1 = perf_counter()
+    consenso_dict = {}
+    
+    while True:
+        try:
+            resposta = rq.post(url, json=job)
+            resposta = resposta.json()
+            consenso_dict = {
+                "id_validador": str(resposta.get('id_validador')),
+                "token": resposta.get('token'),
+                "status": resposta.get('status')
+            }
+            break
+        except:
+            tentativas += 1
+            if tentativas >= 3:
+                consenso_dict = {
+                    "id_validador": validador.id,
+                    "token": "invalido",
+                    "status": 0
+                }
+                print(f"Validador ~{validador.id}~ Não respondeu as 3 tentativas, invalidando seu status")
+                tempo2 = perf_counter()
+                relogio_atual += timedelta(seconds=tempo2-tempo1)
+                enviar_log_banco(f"Não foi possivel enviar trabalho para o validador ~{validador.id}~, definindo status para 0.", relogio_atual)
+                validadores_offlines.append(validador.id)
+                break
+            print(f"Validador ~{validador.id}~ Não responde, timeout em {tentativas}/3")
+            sleep(2)
+    
+    return consenso_dict        
 
-def enviar_job_validador(id_validadores,job, relogio_atual):
+
+def enviar_job_validador(id_validadores, job, relogio_atual):
     lista_consenso = []
-    global validadores_offlines
-    for validador in validadores_cadastrados:
-        tempo1 = perf_counter()
-        if validador.id in id_validadores:
-            tentativas = 0
-            while True: # tolerancia a falha, se validador nao responder, anula a job do validador
-                try:
-                    url = "http://"+validador.ip+"/validador/validarJob"
-                    resposta = rq.post(url,json=job)
-                    print(resposta)
-                    resposta = resposta.json()
-                    consenso_dict = {
-                        "id_validador": str(resposta.get('id_validador')),
-                        "token": resposta.get('token'),
-                        "status": resposta.get('status')
-                    }
-                    lista_consenso.append(consenso_dict)
-                    break
-                except:
-                    tentativas+=1
-                    if tentativas>=3:
-                        consenso_dict = {
-                        "id_validador":validador.id,
-                        "token":"invalido",
-                        "status":0
-                        }
-                        print(f"Validador ~{validador.id}~ Não respondeu as 3 tentativas, invalidando seu status")
-                        tempo2 = perf_counter()
-                        relogio_atual += timedelta(seconds=tempo2-tempo1)
-                        enviar_log_banco(f"Não foi possivel enviar trabalho para o validador ~{validador.id}~, definindo status para 0.", relogio_atual)
-                        lista_consenso.append(consenso_dict)
-                        validadores_offlines.append(validador.id)
-                        break
-                    print(f"Validador ~{validador.id}~ Não responde, timeout em {tentativas}/3")
-                    sleep(2)
-                       
+    
+    with ThreadPoolExecutor() as executor:
+        futures = [
+            executor.submit(enviar_request, validador, job, relogio_atual)
+            for validador in validadores_cadastrados
+            if validador.id in id_validadores
+        ]
+        
+        for future in as_completed(futures):
+            lista_consenso.append(future.result())
+    
     return lista_consenso
 
 def validar_consenso(lista_consenso):
@@ -579,7 +624,7 @@ def pegarRelogioBanco():
     while True:
         try:
             tempo_1 = perf_counter()
-            response = rq.get("http://127.0.0.1:5000/hora")
+            response = rq.get("http://main_banco_container:5000/hora")
             tempo_2 = perf_counter()
             correcao_cristian = (tempo_2 - tempo_1)/2
             relogio = response.json()
@@ -624,18 +669,18 @@ def enviar_log_banco(log, horario):
     tentativas = 0
     horario_str = horario.strftime('%Y-%m-%d %H:%M:%S')
     while True:
-            try:
-                rq.post(f"http://127.0.0.1:5000/transacoes/log", json={"log": log, "horario":horario_str})
-                print("Log enviado ao banco")
+        try:
+            rq.post(f"http://main_banco_container:5000/transacoes/log", json={"log": log, "horario":horario_str})
+            print("Log enviado ao banco")
+            break
+        except rq.exceptions.RequestException as e:
+            print(e)
+            tentativas+=1
+            print(f"Erro ao tentar enviar o status da translação para o banco. Timeout em {tentativas}/3")
+            if tentativas>=3:
+                print("Erro ao enviar Log para o banco. Continuando com a transação..")
                 break
-            except rq.exceptions.RequestException as e:
-                print(e)
-                tentativas+=1
-                print(f"Erro ao tentar enviar o status da translação para o banco. Timeout em {tentativas}/3")
-                if tentativas>=3:
-                    print("Erro ao enviar Log para o banco. Continuando com a transação..")
-                    break
-                sleep(2)
+            sleep(2)
 
 #############################################################################################
 #############################################################################################     
@@ -643,12 +688,13 @@ def enviar_log_banco(log, horario):
 def cadastrar_seletor_banco(seletor_atual):
     while True: 
         try:
-            response = rq.post(f"http://127.0.0.1:5000/seletor/{seletor_atual.nome}/{seletor_atual.ip}")
+            response = rq.post(f"http://main_banco_container:5000/seletor/{seletor_atual.nome}/{seletor_atual.ip}")
             if response.status_code == 200:
                 print(f"Seletor cadastrado no banco")
                 break
         except rq.exceptions.RequestException as e:
-            print(f"Erro ao se cadastrar Seletor no banco: {e}")
+            sleep(2)
+            print(f"Erro ao se cadastrar Seletor no banco... tentando novamente: {e}")
 
 #################### Rotas Flask do Seletor ############################    
 
@@ -741,8 +787,9 @@ def transacoes():
 
 
 with app.app_context():
-    nome = input("Digite o seu nome para cadastrar no banco: ")
-    ip = f"127.0.0.1:{5001}"
+    nome = os.getenv('NOME_SELETOR', 'seletor_default')
+    
+    ip = f"seletor_container:{5001}"
     seletor_atual = Seletor(nome=nome, ip=ip)
     cadastrar_seletor_banco(seletor_atual)
     pegarRelogioBanco()
@@ -754,4 +801,4 @@ if __name__ == "__main__":
     processing_thread.daemon = True
     processing_thread.start()
     
-    app.run(host='127.0.0.1', port=5001)
+    app.run(host='0.0.0.0', port=5001)

@@ -70,6 +70,15 @@
         .actions {
             margin-bottom: 20px;
         }
+        .log-box {
+            background-color: #f9f9f9;
+            border: 1px solid #ddd;
+            padding: 10px;
+            margin-top: 20px;
+            white-space: pre-wrap; /* Preserve whitespace and line breaks */
+            overflow-y: auto; /* Add a vertical scrollbar if necessary */
+            height: 300px; /* Adjust the height as needed */
+        }
     </style>
 </head>
 <body>
@@ -80,11 +89,13 @@
                 <li><a href="#" onclick="showSection('clientes')">Clientes</a></li>
                 <li><a href="#" onclick="showSection('seletores')">Seletores</a></li>
                 <li><a href="#" onclick="showSection('transacoes')">Transações</a></li>
+                <li><a href="#" onclick="showSection('logs')">Logs</a></li> <!-- Nova aba para logs -->
             </ul>
         </div>
     </header>
 
     <div class="container main">
+        <!-- Seção de Clientes -->
         <section id="clientes" style="display: none;">
             <h2>Clientes</h2>
             <form id="clienteForm">
@@ -120,6 +131,7 @@
             </table>
         </section>
 
+        <!-- Seção de Seletores -->
         <section id="seletores" style="display: none;">
             <h2>Seletores</h2>
             <form id="seletorForm">
@@ -150,6 +162,7 @@
             </table>
         </section>
 
+        <!-- Seção de Transações -->
         <section id="transacoes" style="display: none;">
             <h2>Transações</h2>
             <form id="transacaoForm">
@@ -185,6 +198,15 @@
                 <tbody></tbody>
             </table>
         </section>
+
+        <!-- Seção de Logs -->
+        <section id="logs" style="display: none;">
+            <h2>Logs</h2>
+            <div class="actions">
+                <button onclick="loadLogs()">Atualizar Logs</button>
+            </div>
+            <div class="log-box" id="logContent"></div>
+        </section>
     </div>
 
     <script>
@@ -213,6 +235,8 @@
             document.getElementById('clientes').style.display = 'none';
             document.getElementById('seletores').style.display = 'none';
             document.getElementById('transacoes').style.display = 'none';
+            document.getElementById('logs').style.display = 'none';
+
             document.getElementById(section).style.display = 'block';
         }
 
@@ -230,41 +254,12 @@
                             <td>${cliente.senha}</td>
                             <td>${cliente.qtdMoeda}</td>
                             <td>
-                                <button onclick="editCliente(${cliente.id})">Editar</button>
-                                <button onclick="deleteCliente(${cliente.id})">Apagar</button>
+                                <button onclick="deleteCliente(${cliente.id})">Deletar</button>
                             </td>
                         `;
                         tbody.appendChild(tr);
                     });
                 });
-        }
-
-        function addCliente() {
-            const nome = document.getElementById('nome').value;
-            const senha = document.getElementById('senha').value;
-            const qtdMoeda = document.getElementById('qtdMoeda').value;
-
-            fetch(`/cliente/${nome}/${senha}/${qtdMoeda}`, { method: 'POST' })
-                .then(response => response.json())
-                .then(data => {
-                    loadClientes();
-                    document.getElementById('clienteForm').reset();
-                });
-        }
-
-        function editCliente(id) {
-            const qtdMoeda = prompt("Digite a quantidade de moedas:");
-            if (qtdMoeda !== null) {
-                fetch(`/cliente/${id}/${qtdMoeda}`, { method: 'POST' })
-                    .then(response => response.json())
-                    .then(data => loadClientes());
-            }
-        }
-
-        function deleteCliente(id) {
-            fetch(`/cliente/${id}`, { method: 'DELETE' })
-                .then(response => response.json())
-                .then(data => loadClientes());
         }
 
         function loadSeletores() {
@@ -280,41 +275,12 @@
                             <td>${seletor.nome}</td>
                             <td>${seletor.ip}</td>
                             <td>
-                                <button onclick="editSeletor(${seletor.id})">Editar</button>
-                                <button onclick="deleteSeletor(${seletor.id})">Apagar</button>
+                                <button onclick="deleteSeletor(${seletor.id})">Deletar</button>
                             </td>
                         `;
                         tbody.appendChild(tr);
                     });
                 });
-        }
-
-        function addSeletor() {
-            const nome = document.getElementById('nomeSeletor').value;
-            const ip = document.getElementById('ipSeletor').value;
-
-            fetch(`/seletor/${nome}/${ip}`, { method: 'POST' })
-                .then(response => response.json())
-                .then(data => {
-                    loadSeletores();
-                    document.getElementById('seletorForm').reset();
-                });
-        }
-
-        function editSeletor(id) {
-            const nome = prompt("Digite o novo nome:");
-            const ip = prompt("Digite o novo IP:");
-            if (nome !== null && ip !== null) {
-                fetch(`/seletor/${id}/${nome}/${ip}`, { method: 'POST' })
-                    .then(response => response.json())
-                    .then(data => loadSeletores());
-            }
-        }
-
-        function deleteSeletor(id) {
-            fetch(`/seletor/${id}`, { method: 'DELETE' })
-                .then(response => response.json())
-                .then(data => loadSeletores());
         }
 
         function loadTransacoes() {
@@ -336,6 +302,56 @@
                         tbody.appendChild(tr);
                     });
                 });
+        }
+
+        function loadLogs() {
+            fetch('/logs')
+                .then(response => response.text())
+                .then(data => {
+                    const logContent = document.getElementById('logContent');
+                    logContent.textContent = data;
+                });
+        }
+
+        function addCliente() {
+            const nome = document.getElementById('nome').value;
+            const senha = document.getElementById('senha').value;
+            const qtdMoeda = document.getElementById('qtdMoeda').value;
+
+            fetch(`/cliente/${nome}/${senha}/${qtdMoeda}`, { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    loadClientes();
+                    document.getElementById('clienteForm').reset();
+                });
+        }
+
+        function deleteCliente(id) {
+            fetch(`/cliente/${id}`, { method: 'DELETE' })
+                .then(response => response.json())
+                .then(data => loadClientes());
+        }
+
+        function addSeletor() {
+            const nome = document.getElementById('nomeSeletor').value;
+            const ip = document.getElementById('ipSeletor').value;
+
+            fetch(`/seletor/${nome}/${ip}`, { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    loadSeletores();
+                    document.getElementById('seletorForm').reset();
+                });
+        }
+
+        function deleteSeletor(id) {
+            fetch(`/seletor/${id}`, {
+                method: 'DELETE'
+            })
+            .then(response => response.json())
+            .then(data => {
+                loadSeletores();
+            });
         }
 
         function addTransacao() {

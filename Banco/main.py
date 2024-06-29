@@ -11,6 +11,7 @@ import requests
 
 #Rota adicional "/transacoes/receberDadosAtualizados" criada
 #Rota adicional "/transacoes/log" criada
+#Rota adicional "'/logs'" criada (para mostrar no html javascript)
 
 app = Flask(__name__)
 
@@ -309,6 +310,22 @@ def receberDadosAtualizados():
 
     else:
         return jsonify(['Method Not Allowed'])
+    
+@app.route('/logs', methods=['GET']) #ROTA NOVA
+def get_logs():
+
+    log_file_path = "logs.txt"
+    
+    if not os.path.exists(log_file_path):
+        #Cria o arquivo se ele não existir
+        with open(log_file_path, 'w') as arquivo:
+            pass  # apenas cria o arquivo vazio
+
+    with open("logs.txt", 'r') as arquivo:
+        logs = arquivo.readlines()
+    formatted_logs = [log.strip() for log in logs]
+    return "\n".join(formatted_logs)
+
 
 @app.route('/transacoes/log', methods=["POST"]) #ROTA NOVA
 def log():
@@ -323,6 +340,8 @@ def log():
     
 @app.errorhandler(404)
 def page_not_found(error):
+    if request.path == '/favicon.ico':
+        return '', 204
     return render_template('page_not_found.html'), 404
 
 if __name__ == "__main__":
@@ -334,4 +353,4 @@ processing_thread.daemon = True
 processing_thread.start()
         
     
-app.run(host='127.0.0.1', port=5000, debug=True)
+app.run(host='0.0.0.0', port=5000)

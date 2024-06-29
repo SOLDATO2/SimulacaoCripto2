@@ -1,0 +1,27 @@
+FROM python:latest
+
+COPY Seletor/seletor.py /
+
+#from concurrent.futures import ThreadPoolExecutor, as_completed
+#from queue import Queue
+#from time import perf_counter, sleep
+#from flask import Flask,jsonify, make_response,request
+#from datetime import time,datetime,timedelta
+#import requests as rq
+#import uuid
+#import threading
+#import random
+ENV NOME_SELETOR=seletor_default
+
+RUN pip install futures
+RUN pip install queuelib
+#RUN pip install time
+RUN pip install flask
+RUN pip install datetime
+RUN pip install requests
+RUN pip install uuid
+RUN pip install Thread
+#RUN pip install random
+EXPOSE 5001
+
+CMD [ "python", "./seletor.py" ]

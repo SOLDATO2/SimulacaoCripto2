@@ -1,5 +1,5 @@
+import os
 from queue import Queue
-import socket
 import threading
 from flask import Flask,jsonify, make_response,request
 from datetime import time,datetime,timedelta
@@ -8,7 +8,9 @@ import requests as rq
 app = Flask(__name__)
 aviso_queue = Queue()
 processing_thread = None
-PORTA = 5002
+PORTA = os.getenv('PORTA_VALIDADOR', '5002')
+nome = os.getenv('NOME_VALIDADOR', '?')
+
 RELOGIO_SISTEMA = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
 TOKEM = ""
 ID = ""
@@ -36,6 +38,7 @@ class Remetente():
     def contCem(self,horario):
         if (horario - self.horario_inicio).total_seconds() <= 60:
             self.qnt_transacoes_ultimo_min+=1
+            print(f"QNT DE VEZES QUE REMETENTE PASSOU POR ESSE VALIDADOR ---> {self.qnt_transacoes_ultimo_min}")
             if self.qnt_transacoes_ultimo_min > 100:
                 self.qnt_transacoes_ultimo_min=0
                 self.restrito=True
@@ -61,18 +64,22 @@ def process_avisos():
 def process_aviso(aviso):
     global TOKEM
     global ID
+    global nome
+    global PORTA
     if aviso.get('aviso') == "Voce foi expulso por ma conduta.":
         while True:
+            print("Você foi expulso por ter muitas flags")
+            
             id = input("Digite o seu id, caso contrario não digite nada: ")
             saldo = float(input("Digite um saldo para depositar: "))
-            ip = f"127.0.0.1:{PORTA}"
+            ip = f"{nome}:{PORTA}"
 
             #####
             conectado = False
             tentativas = 0
             while True:
                 try:
-                    response = rq.post("http://127.0.0.1:5001/seletor/cadastrarValidador", json={'id': id, 'saldo': saldo, 'ip': ip})
+                    response = rq.post("http://seletor_container:5001/seletor/cadastrarValidador", json={'id': id, 'saldo': saldo, 'ip': ip})
                     
                     if response.text == 'Saldo insuficiente':
                         print("Você digitou um saldo insuficiente.")
@@ -99,34 +106,21 @@ def process_aviso(aviso):
             if conectado == True:
                 break
     
-    
-
-def find_available_port(PORTA): # ACHA UMA PORTA DISPONÍVEL PARA O VALIDADOR
-    port = PORTA
-    while True:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            sock.bind(('127.0.0.1', port))
-            return port
-        except OSError:
-            port += 1
-        finally:
-            sock.close() 
 
 with app.app_context():
-    PORTA = find_available_port(PORTA)
+
     TOKEM = ""
     while True:
         id = input("Digite o seu id, caso contrario não digite nada: ")
         saldo = float(input("Digite um saldo para depositar: "))
-        ip = f"127.0.0.1:{PORTA}"
+        ip = f"{nome}:{PORTA}"
 
         #####
         conectado = False
         tentativas = 0
         while True:
             try:
-                response = rq.post("http://127.0.0.1:5001/seletor/cadastrarValidador", json={'id': id, 'saldo': saldo, 'ip': ip})
+                response = rq.post("http://seletor_container:5001/seletor/cadastrarValidador", json={'id': id, 'saldo': saldo, 'ip': ip})
                 
                 if response.text == 'Saldo insuficiente':
                     print("Você digitou um saldo insuficiente.")
@@ -192,7 +186,9 @@ def validarJob():
     
     if remetente == "" or valor == "" or saldo == "" or horario == "":
         status = 0
+        print("Algum parametro está incompleto, retornando status 0")
         retornar_job = {"id_validador": ID,"token":TOKEM,"status":status}
+        print(f"STATUS TRANSACAO ---> {status}")
         return jsonify(retornar_job)
     
     
@@ -200,11 +196,15 @@ def validarJob():
         dict_remetente[remetente] = Remetente(horario)
         
     if dict_remetente[remetente].um_minuto(horario):                     #verifica se remetente pode ser removido da lista de restricao
+        print("REMETENTE AINDA ESTÁ RESTRITO")
         retornar_job = {"id_validador": ID,"token":TOKEM,"status":status}  #caso contrario retorna a job com status 2
+        print(f"STATUS TRANSACAO ---> {status}")
         return jsonify(retornar_job)
         
     if dict_remetente[remetente].contCem(horario):                       #Verifica se remetente fez mais de 100 transacoes no ultimo min
+        print("REMETENTE FOI ADICIONADO A LISTA DE RESTRICAO POR 1 MIN")
         retornar_job = {"id_validador": ID,"token":TOKEM,"status":status}  #se passou de 100, retorna status 2
+        print(f"STATUS TRANSACAO ---> {status}")
         return jsonify(retornar_job)
         
     if saldo >= valor*(1.015): #validar saldo + taxas
@@ -214,9 +214,16 @@ def validarJob():
                     print("Não existe HORARIO_ULTIMA_TRANSACAO, portanto horario será aprovado")
                     HORARIO_ULTIMA_TRANSACAO = horario
                 status=1
+            else:
+                print("Não foi possivel validar horario transacao...horario transacao atual não é > HORARIO_ULTIMA_TRANSACAO")
+        else:
+            print("Não foi possivel validar horario transacao...horario transacao não é <= RELOGIO_SISTEMA")
+    else:
+        print("Não foi possivel validar saldo... saldo + taxas insuficiente")
     
     retornar_job = {"id_validador": ID,"token":TOKEM,"status":status}
     print(retornar_job)
+    print(f"STATUS TRANSACAO ---> {status}")
     return jsonify(retornar_job)
 
 @app.route('/validador/avisos', methods=["POST"])
@@ -233,4 +240,4 @@ if __name__ == "__main__":
     processing_thread.daemon = True
     processing_thread.start()
     
-    app.run(host='127.0.0.1', port=PORTA, debug=True,use_reloader=False)
+    app.run(host='0.0.0.0', port=PORTA, debug=True,use_reloader=False)

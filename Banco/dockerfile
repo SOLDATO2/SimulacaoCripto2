@@ -1,0 +1,42 @@
+FROM python:latest
+
+WORKDIR /app
+
+COPY Banco/main.py /app
+COPY Banco/templates/index.html /app/templates/
+
+
+RUN pip install futures
+RUN pip install dataclasses
+RUN pip install queuelib
+RUN pip install Flask-Migrate
+#RUN pip install time
+RUN pip install flask
+RUN pip install datetime
+RUN pip install requests
+RUN pip install uuid
+RUN pip install Thread
+RUN pip install SQLAlchemy
+#RUN pip install random
+
+EXPOSE 5000
+#docker run -it --rm -p 80:5000 -td main_banco
+#docker run -p 172.17.16.1:5000:5000 -td main_banco
+
+#docker exec -it id_container sh
+
+#docker network create -d overlay --attachable rede_de_containers
+#docker run --network rede_de_containers seletor
+#docker run --network rede_de_containers main_banco
+
+#0. docker swarm
+#1. docker network create -d overlay --attachable rede_de_containers
+#2. docker run --network rede_de_containers -t -i -p 5000:5000 main_banco
+#3. docker run --network rede_de_containers -t -i -p 5001:5001 seletor
+
+#docker network inspect rede_de_containers 
+
+
+# RODAR---->docker run --network rede_de_containers -t -i -p 5000:5000 main_banco
+#WORKDIR /templates
+CMD [ "python", "./main.py" ]
