@@ -15,7 +15,7 @@ O projeto possui duas versões nos arquivos disponíveis:
 Para utilizar o projeto fora de um ambiente Docker:
 
 1. Navegue até a pasta `SimulacaoCripto-PreDockerizacao`.
-2. Você encontrará os arquivos Python necessários para execução sem Docker, basta iniciar nessa ordem: "main.py" para iniciar o banco, "seletor.py" para iniciar o seletor (ao iniciar, digite um nome qualquer para o seletor) e por fim "validador.py" para iniciar validadores (caso o validador esteja sendo cadastrado, digite o id, caso o contrario não digite nada e insira o saldo.
+2. Você encontrará os arquivos Python necessários para execução sem Docker, basta iniciar nessa ordem: `main.py` para iniciar o banco, `seletor.py` para iniciar o seletor (ao iniciar, digite um nome qualquer para o seletor) e por fim `validador.py` para iniciar validadores (caso o validador esteja sendo cadastrado, digite o id, caso o contrario não digite nada e insira o saldo.
 
 ### Utilização com Docker
 
