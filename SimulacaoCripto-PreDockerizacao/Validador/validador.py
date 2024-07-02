@@ -224,10 +224,16 @@ def validarJob():
                 status=1
             else:
                 print("Não foi possivel validar horario transacao...horario transacao atual não é > HORARIO_ULTIMA_TRANSACAO")
+                print(f"Horario transacao atual: {horario}")
+                print(f"Horario ultima transacao atual: {HORARIO_ULTIMA_TRANSACAO}")
         else:
             print("Não foi possivel validar horario transacao...horario transacao não é <= RELOGIO_SISTEMA")
+            print(f"Horario transacao atual: {horario}")
+            print(f"Horario transacao atual: {RELOGIO_SISTEMA}")
     else:
         print("Não foi possivel validar saldo... saldo + taxas insuficiente")
+        print(f"Saldo remetente: {saldo}")
+        print(f"Valor + taxas: {valor*(1.015)}")
         
     retornar_job = {"id_validador": ID,"token":TOKEM,"status":status}
     print(retornar_job)
@@ -248,4 +254,4 @@ if __name__ == "__main__":
     processing_thread.daemon = True
     processing_thread.start()
     
-    app.run(host='127.0.0.1', port=PORTA, debug=True,use_reloader=False)
+    app.run(host='127.0.0.1', port=PORTA,use_reloader=False)

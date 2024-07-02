@@ -39,4 +39,4 @@ EXPOSE 5000
 
 # RODAR---->docker run --network rede_de_containers -t -i -p 5000:5000 main_banco
 #WORKDIR /templates
-CMD [ "python", "./main.py" ]
+CMD [ "python", "-u", "./main.py" ]

@@ -11,4 +11,4 @@ RUN pip install requests
 RUN pip install Thread
 #RUN pip install random
 
-CMD [ "python", "./validador.py" ]
+CMD [ "python", "-u", "./validador.py" ]

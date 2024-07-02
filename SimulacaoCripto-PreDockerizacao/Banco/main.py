@@ -12,6 +12,7 @@ import requests
 #Rota adicional "/transacoes/receberDadosAtualizados" criada
 #Rota adicional "/transacoes/log" criada
 #Rota adicional "'/logs'" criada (para mostrar no html javascript)
+#rota adicional "ConectarSeletor" criada
 
 app = Flask(__name__)
 
@@ -39,10 +40,12 @@ class Seletor(db.Model):
     id: int
     nome: str
     ip: str
+    qtdMoeda: float
     
     id = db.Column(db.Integer, primary_key=True)
     nome = db.Column(db.String(20), unique=False, nullable=False)
     ip = db.Column(db.String(15), unique=False, nullable=False)
+    qtdMoeda = db.Column(db.Integer, unique=False, nullable=False)
 
 @dataclass
 class Transacao(db.Model):
@@ -169,14 +172,15 @@ def ListarSeletor():
     if(request.method == 'GET'):
         produtos = Seletor.query.all()
         return jsonify(produtos)  
-
-@app.route('/seletor/<string:nome>/<string:ip>', methods = ['POST'])
-def InserirSeletor(nome, ip):
-    if request.method=='POST' and nome != '' and ip != '':
-        objeto = Seletor(nome=nome, ip=ip)
+    
+#"POST /seletor/seletor_default/seletor_container:5001/0
+@app.route('/seletor/<string:nome>/<float:qtdMoeda>/<string:ip>', methods = ['POST'])
+def InserirSeletor(nome,qtdMoeda , ip):
+    if request.method=='POST' and nome != '' and ip != '' and qtdMoeda != '':
+        objeto = Seletor(nome=nome, ip=ip,qtdMoeda=qtdMoeda)
         db.session.add(objeto)
         db.session.commit()
-        return jsonify(objeto)
+        return jsonify({'id':objeto.id})
     else:
         return jsonify(['Method Not Allowed'])
 
@@ -188,18 +192,32 @@ def UmSeletor(id):
     else:
         return jsonify(['Method Not Allowed'])
 
-@app.route('/seletor/<int:id>/<string:nome>/<string:ip>', methods=["POST"])
-def EditarSeletor(id, nome, ip):
+@app.route('/seletor/<int:id>/<string:nome>/<float:qtdMoeda>/<string:ip>', methods=["POST"])
+def EditarSeletor(id, nome,qtdMoeda,ip):
     if request.method=='POST':
         try:
-            varNome = nome
-            varIp = ip
-            validador = Seletor.query.filter_by(id=id).first()
+            seletor = Seletor.query.filter_by(id=id).first()
+            seletor.nome = nome
+            seletor.ip = ip
+            seletor.qtdMoeda = qtdMoeda
             db.session.commit()
-            validador.nome = varNome
-            validador.ip = varIp
+            return jsonify(seletor)
+        except Exception as e:
+            data={
+                "message": "Atualização não realizada"
+            }
+            return jsonify(data)
+    else:
+        return jsonify(['Method Not Allowed'])
+
+@app.route('/seletor/<int:id>/<string:ip>', methods=["POST"])
+def ConectarSeletor(id,ip):
+    if request.method=='POST':
+        try:
+            seletor = Seletor.query.filter_by(id=id).first()
+            seletor.ip = ip
             db.session.commit()
-            return jsonify(validador)
+            return jsonify(seletor)
         except Exception as e:
             data={
                 "message": "Atualização não realizada"
@@ -289,9 +307,12 @@ def receberDadosAtualizados():
         dados = request.json
         print(dados)
         id_remetente = dados.get('id_remetente')
-        quantia_rem = dados.get('quantia_rem')
         id_destinatario = dados.get('id_destinatario')
+        id_seletor = dados.get('id_seletor')
+        quantia_rem = dados.get('quantia_rem')
         quantia_dest = dados.get('quantia_dest')
+        quantia_seletor = float(dados.get('quantia_seletor'))
+        
         try:
             cliente = Cliente.query.filter_by(id=id_destinatario).first()
             cliente.qtdMoeda = quantia_dest
@@ -299,6 +320,10 @@ def receberDadosAtualizados():
             
             remetente = Cliente.query.filter_by(id=id_remetente).first()
             remetente.qtdMoeda = quantia_rem
+            db.session.commit()
+            
+            seletor = Seletor.query.filter_by(id=id_seletor).first()
+            seletor.qtdMoeda = quantia_seletor
             db.session.commit()
             
             return jsonify(['Alteração feita com sucesso'])
@@ -310,7 +335,7 @@ def receberDadosAtualizados():
 
     else:
         return jsonify(['Method Not Allowed'])
-
+    
 @app.route('/logs', methods=['GET']) #ROTA NOVA
 def get_logs():
 
@@ -325,7 +350,7 @@ def get_logs():
         logs = arquivo.readlines()
     formatted_logs = [log.strip() for log in logs]
     return "\n".join(formatted_logs)
-    
+
 
 @app.route('/transacoes/log', methods=["POST"]) #ROTA NOVA
 def log():

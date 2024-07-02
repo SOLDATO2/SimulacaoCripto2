@@ -1,6 +1,8 @@
 FROM python:latest
 
-COPY Seletor/seletor.py /
+WORKDIR /app
+
+COPY Seletor/seletor.py /app
 
 #from concurrent.futures import ThreadPoolExecutor, as_completed
 #from queue import Queue
@@ -24,4 +26,4 @@ RUN pip install Thread
 #RUN pip install random
 EXPOSE 5001
 
-CMD [ "python", "./seletor.py" ]
+CMD [ "python", "-u", "./seletor.py" ]
