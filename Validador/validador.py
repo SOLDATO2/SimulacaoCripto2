@@ -179,6 +179,9 @@ def validarJob():
     recebedor=job.get('recebedor') # id destinatario
     valor=job.get('valor')
     saldo=job.get('saldo')
+    HORARIO_ULTIMA_TRANSACAO = job.get('horario_ultima_transacao')
+    if HORARIO_ULTIMA_TRANSACAO != "":
+        HORARIO_ULTIMA_TRANSACAO = datetime.strptime(HORARIO_ULTIMA_TRANSACAO,'%Y-%m-%d %H:%M:%S.%f')
     status=2
     split_horario = job.get('horario').split(sep='T')
     horario = split_horario[0]+" "+split_horario[1]

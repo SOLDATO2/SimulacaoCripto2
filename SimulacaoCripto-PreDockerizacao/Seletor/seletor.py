@@ -94,18 +94,20 @@ class Validador():
 
 # Função para processar jobs da fila
 def process_jobs():
-    global job_atual
     while True:
         job = job_queue.get()
         if job is None:
             break
-        job_atual = job
+        print(job)
         process_job(job)
         job_queue.task_done()
             
 def process_job(job):
     global relogio_atual
     relogio_atual = pegarRelogioBanco()
+    if relogio_atual == False:
+        print("Não foi possivel sincronizar com o banco...")
+        return
     tempo_1_start = time()
     print("Job recebido")
     validadores_validos = []
@@ -586,7 +588,6 @@ def pegarRelogioBanco():
             sleep(2)
 
 def sincronismo_relogios(lista_validadores): 
-    lista_validadores
     global relogio_atual #SELETOR
 
     ###SINCRONIZAR

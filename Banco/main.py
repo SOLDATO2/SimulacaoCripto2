@@ -13,6 +13,8 @@ import requests
 #Rota adicional "/transacoes/log" criada
 #Rota adicional "'/logs'" criada (para mostrar no html javascript)
 #rota adicional "ConectarSeletor" criada
+#rota CriaTransacao modificada
+#classe transacao e seletor modificadas
 
 app = Flask(__name__)
 
@@ -267,11 +269,28 @@ def CriaTransacao(rem, reb, valor):
             #Implementar a rota /localhost/<ipSeletor>/transacoes
             url = "http://"+ seletor.ip + '/seletor/transacoes'
             
+            
+            ultima_transacao = Transacao.query.get(objeto.id - 1)
+            if ultima_transacao:
+                ultima_transacao_hora = ultima_transacao.horario
+                ultima_transacao_hora = ultima_transacao_hora.isoformat()  
+            else:
+                ultima_transacao_hora = ""
+            
             data = objeto.to_dict()
+            if ultima_transacao_hora != "":
+                split_horario = ultima_transacao_hora.split(sep='T')
+                horario_normalizado = split_horario[0]+" "+split_horario[1]
+                data["horario_ultima_transacao"] = horario_normalizado
+            else:
+                data["horario_ultima_transacao"] = ultima_transacao_hora
+            ##########
+            print(data)
             
             # Envia a requisição com o dicionário
             requests.post(url, json=data)
-        return jsonify(objeto.to_dict())
+
+        return jsonify(data)
     else:
         return jsonify(['Method Not Allowed'])
 
