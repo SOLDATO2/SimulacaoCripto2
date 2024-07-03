@@ -14,6 +14,7 @@ import requests
 #Rota adicional "'/logs'" criada (para mostrar no html javascript)
 #rota adicional "ConectarSeletor" criada
 #rota CriaTransacao modificada
+#rota ConectarSeletor criada
 #classe transacao e seletor modificadas
 
 app = Flask(__name__)
