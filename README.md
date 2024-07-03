@@ -1,5 +1,7 @@
 # SimulacaoCripto2
 
+Video Apresentação: https://www.youtube.com/watch?v=8ipAfqGAMP4
+
 ## Integrantes
 - Felipe Porto Caldeira do Nascimento
 - Alexandre Henning Wahl
